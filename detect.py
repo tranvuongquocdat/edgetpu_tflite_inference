@@ -8,9 +8,9 @@ import argparse
 
 # Add argument parser
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_path', type=str, default="models/model_240.tflite",
+parser.add_argument('--model_path', type=str, default="models/yolo12n_320.tflite",
                     help='Path to the model file')
-parser.add_argument('--names_path', type=str, default="models/sign_language_label.yaml",
+parser.add_argument('--names_path', type=str, default="models/label_yolo12.yaml",
                     help='Path to the labels file')
 args = parser.parse_args()
 
