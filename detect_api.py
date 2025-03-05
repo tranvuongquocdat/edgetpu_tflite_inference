@@ -21,11 +21,11 @@ args = parser.parse_args()
 
 # Initialize camera
 camera = picamera2.Picamera2()
-camera_config = camera.create_preview_configuration(main={"format": "RGB888","size": (720, 640)})
+camera_config = camera.create_preview_configuration(main={"format": "RGB888","size": (640, 480)})
 camera.configure(camera_config)
 
 # Initialize model
-model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.5, iou_thresh=0.25)
+model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.2, iou_thresh=0.25)
 input_shape = model.get_image_size()
 
 async def process_client(websocket):
