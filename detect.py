@@ -4,6 +4,15 @@ import picamera2
 import numpy as np
 import time
 import os
+import argparse
+
+# Add argument parser
+parser = argparse.ArgumentParser()
+parser.add_argument('--model_path', type=str, default="models/model_240.tflite",
+                    help='Path to the model file')
+parser.add_argument('--names_path', type=str, default="models/sign_language_label.yaml",
+                    help='Path to the labels file')
+args = parser.parse_args()
 
 # Initialize the camera
 camera = picamera2.Picamera2()
@@ -11,10 +20,8 @@ camera_config = camera.create_preview_configuration(main={"format": "RGB888","si
 camera.configure(camera_config)
 camera.start()
 
-model_path = "models/model_240.tflite"
-names_path = "models/sign_language_label.yaml"
-# Load model
-model = EdgeTPUModel(model_path, names_path, conf_thresh=0.7, iou_thresh=0.25)
+# Use command line arguments for model paths
+model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.7, iou_thresh=0.25)
 input_shape = model.get_image_size()
 
 # Variables to calculate FPS
