@@ -11,6 +11,8 @@ SERVER_PORT = "8000"
 
 async def connect_to_server():
     uri = f"ws://{SERVER_IP}:{SERVER_PORT}/ws"
+    last_fps = None
+    last_cpu_temp = None
     
     while True:  # Add reconnection loop
         try:
@@ -22,6 +24,12 @@ async def connect_to_server():
                         # Receive data from server with timeout
                         data = await asyncio.wait_for(websocket.recv(), timeout=5.0)
                         data = json.loads(data)
+                        
+                        # Update last values if new data is available
+                        if data['fps'] is not None:
+                            last_fps = data['fps']
+                        if data['cpu_temp'] is not None:
+                            last_cpu_temp = data['cpu_temp']
                         
                         # Decode image
                         img_bytes = base64.b64decode(data['image'])
@@ -39,21 +47,20 @@ async def connect_to_server():
                             conf = det[4]
                             cls = int(det[5])
                             
-                            # Add label with class name and confidence
                             label = f"Class {cls}: {conf:.2f}"
                             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                             cv2.putText(frame, label, (x1, y1-10),
                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                         
-                        # Show FPS and CPU temp if available
-                        if data['fps']:
-                            fps_text = f"FPS: {data['fps']:.2f}"
+                        # Always show the last known FPS and CPU temp values
+                        if last_fps is not None:
+                            fps_text = f"FPS: {last_fps:.2f}"
                             cv2.putText(frame, fps_text,
                                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
                                       1, (0, 255, 0), 2)
                             
-                        if data['cpu_temp']:
-                            temp_text = f"CPU Temp: {data['cpu_temp']}°C"
+                        if last_cpu_temp is not None:
+                            temp_text = f"CPU Temp: {last_cpu_temp}°C"
                             cv2.putText(frame, temp_text,
                                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX,
                                       1, (0, 255, 0), 2)
