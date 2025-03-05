@@ -21,7 +21,7 @@ camera.configure(camera_config)
 camera.start()
 
 # Use command line arguments for model paths
-model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.7, iou_thresh=0.25)
+model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.2, iou_thresh=0.25)
 input_shape = model.get_image_size()
 
 # Variables to calculate FPS
