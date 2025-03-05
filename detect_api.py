@@ -21,7 +21,7 @@ args = parser.parse_args()
 
 # Initialize camera
 camera = picamera2.Picamera2()
-camera_config = camera.create_preview_configuration(main={"format": "RGB888","size": (640, 480)})
+camera_config = camera.create_preview_configuration(main={"format": "RGB888","size": (720, 640)})
 camera.configure(camera_config)
 
 # Initialize model
