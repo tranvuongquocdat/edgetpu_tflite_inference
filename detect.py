@@ -8,9 +8,9 @@ import argparse
 
 # Add argument parser
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_path', type=str, default="models/yolo12n_320.tflite",
+parser.add_argument('--model_path', type=str, default="models/normal_model.tflite",
                     help='Path to the model file')
-parser.add_argument('--names_path', type=str, default="models/label_yolo12.yaml",
+parser.add_argument('--names_path', type=str, default="models/normal_label.yaml",
                     help='Path to the labels file')
 args = parser.parse_args()
 
@@ -21,7 +21,7 @@ camera.configure(camera_config)
 camera.start()
 
 # Use command line arguments for model paths
-model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.2, iou_thresh=0.25)
+model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.5, iou_thresh=0.25)
 input_shape = model.get_image_size()
 
 # Variables to calculate FPS
