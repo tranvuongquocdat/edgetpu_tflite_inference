@@ -13,9 +13,9 @@ import json
 
 # Add argument parser
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_path', type=str, default="models/yolo12n_320.tflite",
+parser.add_argument('--model_path', type=str, default="models/normal_model.tflite",
                     help='Path to the model file')
-parser.add_argument('--names_path', type=str, default="models/label_yolo12.yaml",
+parser.add_argument('--names_path', type=str, default="models/normal_label.yaml",
                     help='Path to the labels file')
 args = parser.parse_args()
 
@@ -25,7 +25,7 @@ camera_config = camera.create_preview_configuration(main={"format": "RGB888","si
 camera.configure(camera_config)
 
 # Initialize model
-model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.7, iou_thresh=0.25)
+model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.5, iou_thresh=0.25)
 input_shape = model.get_image_size()
 
 async def process_client(websocket):
@@ -37,6 +37,8 @@ async def process_client(websocket):
         while True:
             # Capture and process image
             full_image = camera.capture_array()
+            # Rotate image 90 degrees counterclockwise
+            full_image = cv2.rotate(full_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
             full_image, net_image, pad = get_image_tensor(full_image, input_shape[0])
             
             # Predict
