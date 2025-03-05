@@ -1,5 +1,4 @@
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import JSONResponse
+import websockets
 import asyncio
 import cv2
 import numpy as np
@@ -10,8 +9,7 @@ from edgetpumodel import EdgeTPUModel
 from utils import get_image_tensor
 import picamera2
 import argparse
-
-app = FastAPI()
+import json
 
 # Add argument parser
 parser = argparse.ArgumentParser()
@@ -30,9 +28,7 @@ camera.configure(camera_config)
 model = EdgeTPUModel(args.model_path, args.names_path, conf_thresh=0.7, iou_thresh=0.25)
 input_shape = model.get_image_size()
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
+async def process_client(websocket):
     camera.start()
     frame_count = 0
     start_time = time.time()
@@ -61,17 +57,30 @@ async def websocket_endpoint(websocket: WebSocket):
             img_str = base64.b64encode(buffer).decode('utf-8')
             
             # Send data
-            await websocket.send_json({
+            await websocket.send(json.dumps({
                 "image": img_str,
-                "detections": det,
+                "detections": det.tolist(),  # Convert numpy array to list
                 "fps": fps
-            })
+            }))
             
     except Exception as e:
         print(f"Connection error: {e}")
     finally:
         camera.stop()
 
+async def main():
+    server = await websockets.serve(
+        process_client,
+        "0.0.0.0",
+        8000,
+        ping_interval=20,
+        ping_timeout=20
+    )
+    print("Server started on ws://0.0.0.0:8000")
+    await server.wait_closed()
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nServer shutting down")
