@@ -45,14 +45,16 @@ async def process_client(websocket):
             pred = model.forward(net_image)
             det = model.process_predictions(pred[0], full_image, pad)
             
-            # Calculate FPS
+            # Calculate FPS and CPU temp every 30 frames
             frame_count += 1
-            if frame_count % 20 == 0:
+            if frame_count % 30 == 0:
                 end_time = time.time()
-                fps = 10 / (end_time - start_time)
+                fps = 30 / (end_time - start_time)
+                cpu_temp = os.popen("vcgencmd measure_temp").readline().replace("temp=","").replace("'C\n","")
                 start_time = time.time()
             else:
                 fps = None
+                cpu_temp = None
                 
             # Encode image to send
             _, buffer = cv2.imencode('.jpg', full_image)
@@ -62,7 +64,8 @@ async def process_client(websocket):
             await websocket.send(json.dumps({
                 "image": img_str,
                 "detections": det.tolist(),  # Convert numpy array to list
-                "fps": fps
+                "fps": fps,
+                "cpu_temp": cpu_temp
             }))
             
     except Exception as e:

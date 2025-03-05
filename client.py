@@ -45,16 +45,24 @@ async def connect_to_server():
                             cv2.putText(frame, label, (x1, y1-10),
                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                         
-                        # Show FPS if available
+                        # Show FPS and CPU temp if available
                         if data['fps']:
-                            cv2.putText(frame, f"FPS: {data['fps']:.2f}",
+                            fps_text = f"FPS: {data['fps']:.2f}"
+                            cv2.putText(frame, fps_text,
                                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                                      1, (0, 255, 0), 2)
+                            
+                        if data['cpu_temp']:
+                            temp_text = f"CPU Temp: {data['cpu_temp']}°C"
+                            cv2.putText(frame, temp_text,
+                                      (10, 70), cv2.FONT_HERSHEY_SIMPLEX,
                                       1, (0, 255, 0), 2)
                         
                         # Display frame
                         cv2.imshow('Detection Results', frame)
                         
                         if cv2.waitKey(1) & 0xFF == ord('q'):
+                            cv2.destroyAllWindows()
                             return  # Clean exit
                             
                     except asyncio.TimeoutError:
@@ -63,15 +71,17 @@ async def connect_to_server():
                         
         except ConnectionClosed:
             print("Connection closed by server, attempting to reconnect...")
+            cv2.destroyAllWindows()
             await asyncio.sleep(2)  # Wait before reconnecting
         except Exception as e:
             print(f"Connection error: {e}")
-            await asyncio.sleep(2)  # Wait before reconnecting
-        finally:
             cv2.destroyAllWindows()
+            await asyncio.sleep(2)  # Wait before reconnecting
 
 if __name__ == "__main__":
-    try:
-        asyncio.get_event_loop().run_until_complete(connect_to_server())
-    except KeyboardInterrupt:
-        print("\nExiting program") 
+    while True:  # Add infinite loop to keep program running
+        try:
+            asyncio.get_event_loop().run_until_complete(connect_to_server())
+        except KeyboardInterrupt:
+            print("\nExiting program")
+            break 
