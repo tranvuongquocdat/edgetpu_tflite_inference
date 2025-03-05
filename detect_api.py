@@ -32,6 +32,9 @@ async def process_client(websocket):
     camera.start()
     frame_count = 0
     start_time = time.time()
+    # Initialize fps and cpu_temp variables
+    fps = 0
+    cpu_temp = 0
     
     try:
         while True:
@@ -52,7 +55,7 @@ async def process_client(websocket):
                 current_fps = 10 / (end_time - start_time)
                 current_cpu_temp = os.popen("vcgencmd measure_temp").readline().replace("temp=","").replace("'C\n","")
                 start_time = time.time()
-                fps = current_fps  # Store the calculated values
+                fps = current_fps  # Update the values
                 cpu_temp = current_cpu_temp
             
             # Encode image to send
