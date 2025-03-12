@@ -57,7 +57,7 @@ def run_interpreter():
     inference_latency = time.perf_counter() - start
 
     dedup_map = {}
-    objs = detect.get_objects(interpreter, 0.4, scale)
+    objs = detect.get_objects(interpreter, 0.5, scale)
     filtered_objs = []
 
     for obj in objs:
@@ -116,9 +116,10 @@ async def process_client(websocket):
             # Convert PIL image to numpy array for OpenCV
             frame = np.array(pil_image)
             
-            # Rotate image 90 degrees counter-clockwise and ensure RGB color space
+            # Rotate image 90 degrees counter-clockwise
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            frame = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
+            # Convert to BGR for OpenCV processing (because OpenCV uses BGR)
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             
             # Convert rotated frame back to PIL for inference
             rotated_pil = Image.fromarray(frame)
