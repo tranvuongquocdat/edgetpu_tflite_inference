@@ -27,14 +27,8 @@ script_dir = script_path.parent
 # Configure camera
 width, height = 640, 480
 picam2 = Picamera2()
-capture_config = picam2.create_still_configuration(
-    main={"size": (width, height), "format": "RGB888"},
-    lores=None,
-    raw=None,
-    colour_space=libcamera.ColorSpace.Raw(),
-    buffer_count=6,
-    controls={"AfMode": libcamera.controls.AfModeEnum.Continuous},
-    queue=True
+capture_config = picam2.create_preview_configuration(
+    main={"format": "RGB888", "size": (width, height)}
 )
 picam2.configure(capture_config)
 
