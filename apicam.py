@@ -116,9 +116,16 @@ async def process_client(websocket):
             # Convert PIL image to numpy array for OpenCV
             frame = np.array(pil_image)
             
+            # Rotate image 90 degrees counter-clockwise and ensure RGB color space
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            frame = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2RGB)
+            
+            # Convert rotated frame back to PIL for inference
+            rotated_pil = Image.fromarray(frame)
+            
             # Create a copy for inference
             if not inference_thread.is_alive():
-                image_buffer.paste(pil_image)
+                image_buffer.paste(rotated_pil)
                 inference_thread = threading.Thread(target=run_interpreter)
                 inference_thread.start()
             
@@ -174,6 +181,7 @@ async def process_client(websocket):
         if inference_thread.is_alive():
             inference_thread.join()
         picam2.stop()
+        print("Waiting for new connection...")
 
 async def main():
     server = await websockets.serve(
