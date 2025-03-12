@@ -34,8 +34,8 @@ picam2.configure(capture_config)
 
 # Configure interpreter
 image_buffer = Image.new("RGB", (width, height))
-labels = read_label_file(str(script_dir / "../models/mobilenet_coco/coco_labels.txt"))
-interpreter = make_interpreter(str(script_dir / "../models/mobilenet_coco/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"))
+labels = read_label_file(str(script_dir / "models/mobilenet_coco/coco_labels.txt"))
+interpreter = make_interpreter(str(script_dir / "models/mobilenet_coco/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"))
 interpreter.allocate_tensors()
 
 detected_objs = []
