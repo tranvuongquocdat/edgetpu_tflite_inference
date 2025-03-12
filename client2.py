@@ -59,23 +59,23 @@ async def connect_to_server():
                         y_offset = 30
                         if last_fps is not None:
                             fps_text = f"FPS: {last_fps:.2f}"
-                            cv2.putText(frame, fps_text,
-                                      (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.7, (0, 255, 0), 2)
-                            y_offset += 30
+                            # cv2.putText(frame, fps_text,
+                            #           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
+                            #           0.7, (0, 255, 0), 2)
+                            # y_offset += 30
                             
                         if last_inference_latency is not None:
                             latency_text = f"Inference: {last_inference_latency:.2f} ms"
-                            cv2.putText(frame, latency_text,
-                                      (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.7, (0, 255, 0), 2)
-                            y_offset += 30
+                            # cv2.putText(frame, latency_text,
+                            #           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
+                            #           0.7, (0, 255, 0), 2)
+                            # y_offset += 30
                             
                         if last_cpu_temp is not None:
                             temp_text = f"CPU Temp: {last_cpu_temp}°C"
-                            cv2.putText(frame, temp_text,
-                                      (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.7, (0, 255, 0), 2)
+                            # cv2.putText(frame, temp_text,
+                            #           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
+                            #           0.7, (0, 255, 0), 2)
                         
                         # Display frame
                         cv2.imshow('AI Camera Detection', frame)
