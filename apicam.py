@@ -101,30 +101,42 @@ async def process_client(websocket):
     global image_buffer, detected_objs
     
     picam2.start()
-    inference_thread = threading.Thread(target=run_interpreter)
-    inference_thread.daemon = True  # Đảm bảo thread kết thúc khi chương trình chính kết thúc
-    inference_thread.start()
     
     frame_count = 0
     start_time = time.time()
     fps = 0
     cpu_temp = 0
     
-    # Tạo queue cho frame processing
-    frame_queue = asyncio.Queue(maxsize=2)
-    
-    # Hàm xử lý frame trong background
-    async def process_frame():
+    try:
         while True:
-            frame_data = await frame_queue.get()
-            if frame_data is None:  # Signal to exit
-                break
-                
-            frame, detected_objects = frame_data
+            # Capture image
+            pil_image = picam2.capture_image()
+            # Convert PIL image to numpy array for OpenCV
+            frame = np.array(pil_image)
+            
+            # Rotate image 90 degrees counter-clockwise
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            # Convert to BGR for OpenCV processing (because OpenCV uses BGR)
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            # Convert rotated frame back to PIL for inference
+            rotated_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            
+            # Run inference directly instead of using a thread
+            image_buffer.paste(rotated_pil)
+            run_interpreter()
+            
+            # Calculate FPS and CPU temp every 10 frames
+            frame_count += 1
+            if frame_count % 10 == 0:
+                end_time = time.time()
+                fps = 10 / (end_time - start_time)
+                cpu_temp = get_cpu_temp()
+                start_time = time.time()
             
             # Draw bounding boxes for visualization
             frame_with_boxes = frame.copy()
-            for detected_obj in detected_objects:
+            for detected_obj in detected_objs:
                 obj, bbox = detected_obj
                 label = labels.get(obj.id, obj.id)
                 cv2.rectangle(frame_with_boxes, 
@@ -159,51 +171,6 @@ async def process_client(websocket):
                 }))
             except websockets.exceptions.ConnectionClosed:
                 break
-                
-            frame_queue.task_done()
-    
-    # Bắt đầu task xử lý frame
-    frame_processor = asyncio.create_task(process_frame())
-    
-    try:
-        while True:
-            # Capture image
-            pil_image = picam2.capture_image()
-            # Convert PIL image to numpy array for OpenCV
-            frame = np.array(pil_image)
-            
-            # Rotate image 90 degrees counter-clockwise
-            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            # Convert to BGR for OpenCV processing (because OpenCV uses BGR)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            
-            # Convert rotated frame back to PIL for inference
-            rotated_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            
-            # Create a copy for inference
-            if not inference_thread.is_alive():
-                image_buffer.paste(rotated_pil)
-                inference_thread = threading.Thread(target=run_interpreter)
-                inference_thread.daemon = True
-                inference_thread.start()
-            
-            # Calculate FPS and CPU temp every 10 frames
-            frame_count += 1
-            if frame_count % 10 == 0:
-                end_time = time.time()
-                fps = 10 / (end_time - start_time)
-                cpu_temp = get_cpu_temp()
-                start_time = time.time()
-            
-            # Đẩy frame vào queue để xử lý (non-blocking)
-            try:
-                await asyncio.wait_for(
-                    frame_queue.put((frame, detected_objs.copy())), 
-                    timeout=0.1
-                )
-            except asyncio.TimeoutError:
-                # Bỏ qua frame này nếu queue đầy
-                pass
             
             # Small delay to prevent overwhelming the network
             await asyncio.sleep(0.01)
@@ -211,12 +178,6 @@ async def process_client(websocket):
     except Exception as e:
         print(f"Connection error: {e}")
     finally:
-        # Dừng processor task
-        await frame_queue.put(None)
-        await frame_processor
-        
-        if inference_thread.is_alive():
-            inference_thread.join(timeout=1.0)
         picam2.stop()
         print("Waiting for new connection...")
 
