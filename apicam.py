@@ -95,19 +95,75 @@ def format_detections():
 
 def get_cpu_temp():
     temp = os.popen("vcgencmd measure_temp").readline().replace("temp=", "").replace("'C\n", "")
-    return temp
+    return float(temp)
 
 async def process_client(websocket):
     global image_buffer, detected_objs
     
     picam2.start()
     inference_thread = threading.Thread(target=run_interpreter)
+    inference_thread.daemon = True  # Đảm bảo thread kết thúc khi chương trình chính kết thúc
     inference_thread.start()
     
     frame_count = 0
     start_time = time.time()
     fps = 0
     cpu_temp = 0
+    
+    # Tạo queue cho frame processing
+    frame_queue = asyncio.Queue(maxsize=2)
+    
+    # Hàm xử lý frame trong background
+    async def process_frame():
+        while True:
+            frame_data = await frame_queue.get()
+            if frame_data is None:  # Signal to exit
+                break
+                
+            frame, detected_objects = frame_data
+            
+            # Draw bounding boxes for visualization
+            frame_with_boxes = frame.copy()
+            for detected_obj in detected_objects:
+                obj, bbox = detected_obj
+                label = labels.get(obj.id, obj.id)
+                cv2.rectangle(frame_with_boxes, 
+                             (int(bbox.xmin), int(bbox.ymin)), 
+                             (int(bbox.xmax), int(bbox.ymax)), 
+                             (0, 255, 255), 2)
+                cv2.putText(frame_with_boxes, 
+                           f"{label}: {obj.score:.2f}", 
+                           (int(bbox.xmin), int(bbox.ymin) - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            
+            # Add frame info text - chỉ hiển thị một lần với chữ trắng
+            cv2.putText(frame_with_boxes, 
+                       f"FPS: {fps:.2f}, Latency: {inference_latency * 1000:.2f}ms, Temp: {cpu_temp:.1f}°C", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # Encode image
+            _, buffer = cv2.imencode('.jpg', frame_with_boxes)
+            img_str = base64.b64encode(buffer).decode('utf-8')
+            
+            # Format detections
+            detections = format_detections()
+            
+            # Send data
+            try:
+                await websocket.send(json.dumps({
+                    "image": img_str,
+                    "detections": detections,
+                    "fps": fps,
+                    "cpu_temp": cpu_temp,
+                    "inference_latency": inference_latency * 1000
+                }))
+            except websockets.exceptions.ConnectionClosed:
+                break
+                
+            frame_queue.task_done()
+    
+    # Bắt đầu task xử lý frame
+    frame_processor = asyncio.create_task(process_frame())
     
     try:
         while True:
@@ -122,27 +178,14 @@ async def process_client(websocket):
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             
             # Convert rotated frame back to PIL for inference
-            rotated_pil = Image.fromarray(frame)
+            rotated_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             
             # Create a copy for inference
             if not inference_thread.is_alive():
                 image_buffer.paste(rotated_pil)
                 inference_thread = threading.Thread(target=run_interpreter)
+                inference_thread.daemon = True
                 inference_thread.start()
-            
-            # Draw bounding boxes for visualization
-            frame_with_boxes = frame.copy()
-            for detected_obj in detected_objs:
-                obj, bbox = detected_obj
-                label = labels.get(obj.id, obj.id)
-                cv2.rectangle(frame_with_boxes, 
-                             (int(bbox.xmin), int(bbox.ymin)), 
-                             (int(bbox.xmax), int(bbox.ymax)), 
-                             (0, 255, 255), 2)
-                cv2.putText(frame_with_boxes, 
-                           f"{label}: {obj.score:.2f}", 
-                           (int(bbox.xmin), int(bbox.ymin) - 10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
             
             # Calculate FPS and CPU temp every 10 frames
             frame_count += 1
@@ -152,26 +195,15 @@ async def process_client(websocket):
                 cpu_temp = get_cpu_temp()
                 start_time = time.time()
             
-            # Add frame info text
-            cv2.putText(frame_with_boxes, 
-                       f"FPS: {fps:.2f}, Latency: {inference_latency * 1000:.2f}ms", 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
-            # Encode image
-            _, buffer = cv2.imencode('.jpg', frame_with_boxes)
-            img_str = base64.b64encode(buffer).decode('utf-8')
-            
-            # Format detections
-            detections = format_detections()
-            
-            # Send data
-            await websocket.send(json.dumps({
-                "image": img_str,
-                "detections": detections,
-                "fps": fps,
-                "cpu_temp": cpu_temp,
-                "inference_latency": inference_latency * 1000
-            }))
+            # Đẩy frame vào queue để xử lý (non-blocking)
+            try:
+                await asyncio.wait_for(
+                    frame_queue.put((frame, detected_objs.copy())), 
+                    timeout=0.1
+                )
+            except asyncio.TimeoutError:
+                # Bỏ qua frame này nếu queue đầy
+                pass
             
             # Small delay to prevent overwhelming the network
             await asyncio.sleep(0.01)
@@ -179,8 +211,12 @@ async def process_client(websocket):
     except Exception as e:
         print(f"Connection error: {e}")
     finally:
+        # Dừng processor task
+        await frame_queue.put(None)
+        await frame_processor
+        
         if inference_thread.is_alive():
-            inference_thread.join()
+            inference_thread.join(timeout=1.0)
         picam2.stop()
         print("Waiting for new connection...")
 
