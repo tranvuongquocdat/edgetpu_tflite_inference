@@ -1,140 +1,287 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+import torch.nn.functional as F
 
-# Định nghĩa Squeeze-and-Excitation Block
-class SqueezeExcitation(nn.Module):
-    def __init__(self, in_channels):
-        super().__init__()
-        reduced_channels = max(in_channels // 4, 1)  # Giảm channels như trong paper
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc1 = nn.Linear(in_channels, reduced_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.fc2 = nn.Linear(reduced_channels, in_channels)
-        self.hardsigmoid = nn.Hardsigmoid(inplace=True)
 
-    def forward(self, x):
-        identity = x
-        x = self.pool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        x = self.hardsigmoid(x)
-        return identity * x.view(x.size(0), -1, 1, 1)
+def get_model_parameters(model):
+    total_parameters = 0
+    for layer in list(model.parameters()):
+        layer_parameter = 1
+        for l in list(layer.size()):
+            layer_parameter *= l
+        total_parameters += layer_parameter
+    return total_parameters
 
-# Định nghĩa Depthwise Separable Convolution
-class DepthwiseSeparableConv(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, use_se=False):
-        super().__init__()
-        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=stride, padding=1, groups=in_channels, bias=False)
-        self.bn1 = nn.BatchNorm2d(in_channels)
-        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.hardswish = nn.Hardswish(inplace=True)
-        self.se = SqueezeExcitation(in_channels) if use_se else nn.Identity()
+
+def _weights_init(m):
+    if isinstance(m, nn.Conv2d):
+        torch.nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            torch.nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.BatchNorm2d):
+        m.weight.data.fill_(1)
+        m.bias.data.zero_()
+    elif isinstance(m, nn.Linear):
+        n = m.weight.size(1)
+        m.weight.data.normal_(0, 0.01)
+        m.bias.data.zero_()
+
+
+class h_sigmoid(nn.Module):
+    def __init__(self, inplace=True):
+        super(h_sigmoid, self).__init__()
+        self.inplace = inplace
 
     def forward(self, x):
-        out = self.depthwise(x)
-        out = self.bn1(out)
-        out = self.hardswish(out)
-        out = self.se(out)
-        out = self.pointwise(out)
-        out = self.bn2(out)
-        return out
+        return F.relu6(x + 3., inplace=self.inplace) / 6.
 
-# Định nghĩa Inverted Residual Block
-class InvertedResidual(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, expand_ratio, use_se=False, activation=nn.Hardswish):
-        super().__init__()
-        hidden_dim = int(in_channels * expand_ratio)
-        self.use_res_connect = stride == 1 and in_channels == out_channels
 
-        layers = []
-        if expand_ratio != 1:
-            layers.append(nn.Conv2d(in_channels, hidden_dim, 1, bias=False))
-            layers.append(nn.BatchNorm2d(hidden_dim))
-            layers.append(activation(inplace=True))
-        layers.append(DepthwiseSeparableConv(hidden_dim, out_channels, stride, use_se=use_se))
-        self.conv = nn.Sequential(*layers)
-        self.activation = activation(inplace=True) if not use_se else nn.Identity()
+class h_swish(nn.Module):
+    def __init__(self, inplace=True):
+        super(h_swish, self).__init__()
+        self.inplace = inplace
 
     def forward(self, x):
+        out = F.relu6(x + 3., self.inplace) / 6.
+        return out * x
+
+
+def _make_divisible(v, divisor=8, min_value=None):
+    if min_value is None:
+        min_value = divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    # Make sure that round down does not go down by more than 10%.
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
+
+
+class SqueezeBlock(nn.Module):
+    def __init__(self, exp_size, divide=4):
+        super(SqueezeBlock, self).__init__()
+        self.dense = nn.Sequential(
+            nn.Linear(exp_size, exp_size // divide),
+            nn.ReLU(inplace=True),
+            nn.Linear(exp_size // divide, exp_size),
+            h_sigmoid()
+        )
+
+    def forward(self, x):
+        batch, channels, height, width = x.size()
+        # print(f'SqueezeBlock : x-{x.size()}')
+        out = F.avg_pool2d(x, kernel_size=[height, width]).view(batch, -1)
+        out = self.dense(out)
+        out = out.view(batch, channels, 1, 1)
+        # out = hard_sigmoid(out)
+
+        return out * x
+
+
+class MobileBlock(nn.Module):
+    # def __init__(self, in_channels, out_channels, kernal_size, stride, nonLinear, SE, exp_size, dropout_rate=1.0):
+    def __init__(self, in_channels, out_channels, kernal_size, stride, nonLinear, SE, exp_size):
+        super(MobileBlock, self).__init__()
+        self.out_channels = out_channels
+        self.nonLinear = nonLinear
+        self.SE = SE
+        # self.dropout_rate = dropout_rate
+        padding = (kernal_size - 1) // 2
+
+        self.use_connect = stride == 1 and in_channels == out_channels
+
+        if self.nonLinear == "RE":
+            activation = nn.ReLU
+        else:
+            activation = h_swish
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, exp_size, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(exp_size),
+            activation(inplace=True)
+        )
+        self.depth_conv = nn.Sequential(
+            nn.Conv2d(exp_size, exp_size, kernel_size=kernal_size, stride=stride, padding=padding, groups=exp_size),
+            nn.BatchNorm2d(exp_size),
+        )
+
+        if self.SE:
+            self.squeeze_block = SqueezeBlock(exp_size)
+
+        self.point_conv = nn.Sequential(
+            nn.Conv2d(exp_size, out_channels, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(out_channels),
+            activation(inplace=True)
+        )
+
+    def forward(self, x):
+
         out = self.conv(x)
-        out = self.activation(out)
-        if self.use_res_connect:
+        out = self.depth_conv(out)
+
+        # Squeeze and Excite
+        if self.SE:
+            out = self.squeeze_block(out)
+
+        # point-wise conv
+        out = self.point_conv(out)
+
+        # connection
+        if self.use_connect:
             return x + out
-        return out
+        else:
+            return out
 
-# Định nghĩa MobileNetV3
+
 class MobileNetV3(nn.Module):
-    def __init__(self, num_classes=10, config="large"):
-        super().__init__()
-        # Config từ MobileNetV3 paper (in_channels, expand_ratio, out_channels, num_blocks, stride, use_se, activation)
-        configs_dict = {
-            "large": [
-                (16, 1, 16, 1, 1, False, nn.ReLU),
-                (16, 4, 24, 2, 2, False, nn.ReLU),
-                (24, 3, 24, 1, 1, False, nn.ReLU),
-                (24, 3, 40, 3, 2, True, nn.ReLU),
-                (40, 3, 40, 2, 1, True, nn.ReLU),
-                (40, 6, 80, 4, 2, False, nn.Hardswish),
-                (80, 2.5, 80, 3, 1, False, nn.Hardswish),
-                (80, 6, 112, 2, 1, True, nn.Hardswish),
-                (112, 6, 160, 3, 2, True, nn.Hardswish),
-            ],
-            "small": [
-                (16, 1, 16, 1, 2, True, nn.ReLU),
-                (16, 4.5, 24, 2, 2, False, nn.ReLU),
-                (24, 3.67, 40, 3, 2, True, nn.Hardswish),
-                (40, 4, 48, 2, 1, True, nn.Hardswish),
-                (48, 6, 96, 3, 2, True, nn.Hardswish),
+    # def __init__(self, model_mode="SMALL", num_classes=30, multiplier=1.0):
+    def __init__(self, model_mode="LARGE", num_classes=30, multiplier=1.0, dropout_rate=0.0):
+        super(MobileNetV3, self).__init__()
+        self.num_classes = num_classes
+
+        self.features = []
+
+        if model_mode == "LARGE":
+            layers = [
+                [16, 16, 3, 1, "RE", False, 16],
+                [16, 24, 3, 2, "RE", False, 64],
+                [24, 24, 3, 1, "RE", False, 72],
+                [24, 40, 5, 2, "RE", True, 72],
+                [40, 40, 5, 1, "RE", True, 120],
+
+                [40, 40, 5, 1, "RE", True, 120],
+                [40, 80, 3, 2, "HS", False, 240],
+                [80, 80, 3, 1, "HS", False, 200],
+                [80, 80, 3, 1, "HS", False, 184],
+                [80, 80, 3, 1, "HS", False, 184],
+
+                [80, 112, 3, 1, "HS", True, 480],
+                [112, 112, 3, 1, "HS", True, 672],
+                [112, 160, 5, 1, "HS", True, 672],
+                [160, 160, 5, 2, "HS", True, 672],
+                [160, 160, 5, 1, "HS", True, 960],
             ]
-        }
-        self.cfgs = configs_dict[config]
+            init_conv_out = _make_divisible(16 * multiplier)
+            self.init_conv = nn.Sequential(
+                nn.Conv2d(in_channels=3, out_channels=init_conv_out, kernel_size=3, stride=2, padding=1),
+                nn.BatchNorm2d(init_conv_out),
+                h_swish(inplace=True),
+            )
+            self.features.append(
+                nn.Conv2d(in_channels=3, out_channels=init_conv_out, kernel_size=3, stride=2, padding=1))
+            self.features.append(nn.BatchNorm2d(init_conv_out))
+            self.features.append(h_swish(inplace=True))
 
-        # First layer
-        self.first_conv = nn.Sequential(
-            nn.Conv2d(3, 16, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(16),
-            nn.Hardswish(inplace=True)
-        )
+            self.block = []
+            idx = 0
+            for in_channels, out_channels, kernal_size, stride, nonlinear, se, exp_size in layers:
+                idx += 1
+                in_channels = _make_divisible(in_channels * multiplier)
+                out_channels = _make_divisible(out_channels * multiplier)
+                exp_size = _make_divisible(exp_size * multiplier)
+                # print(f'LAYER:{idx}')
+                self.block.append(MobileBlock(in_channels, out_channels, kernal_size, stride, nonlinear, se, exp_size))
+                self.features.append(
+                    MobileBlock(in_channels, out_channels, kernal_size, stride, nonlinear, se, exp_size))
+            self.block = nn.Sequential(*self.block)
 
-        # Feature extraction layers
-        layers = []
-        in_channels = 16
-        for in_ch, t, c, n, s, se, act in self.cfgs:
-            for i in range(n):
-                stride = s if i == 0 else 1
-                layers.append(InvertedResidual(in_channels, c, stride, t, use_se=se, activation=act))
-                in_channels = c
-        self.features = nn.Sequential(*layers)
+            out_conv1_in = _make_divisible(160 * multiplier)
+            out_conv1_out = _make_divisible(960 * multiplier)
+            self.out_conv1 = nn.Sequential(
+                nn.Conv2d(out_conv1_in, out_conv1_out, kernel_size=1, stride=1),
+                nn.BatchNorm2d(out_conv1_out),
+                h_swish(inplace=True),
+            )
 
-        # Last layers
-        last_channels = 160 if config == "large" else 96
-        hidden_channels = 960 if config == "large" else 576
-        out_channels = 1280 if config == "large" else 1024
-        self.last_conv = nn.Sequential(
-            nn.Conv2d(last_channels, hidden_channels, 1, bias=False),
-            nn.BatchNorm2d(hidden_channels),
-            nn.Hardswish(inplace=True)
-        )
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.dropout = nn.Dropout(0.2)
-        self.classifier = nn.Linear(hidden_channels, num_classes)
+            self.features.append(nn.Conv2d(out_conv1_in, out_conv1_out, kernel_size=1, stride=1))
+            self.features.append(nn.BatchNorm2d(out_conv1_out))
+            self.features.append(h_swish(inplace=True))
+
+            out_conv2_in = _make_divisible(960 * multiplier)
+            out_conv2_out = _make_divisible(1280 * multiplier)
+            self.out_conv2 = nn.Sequential(
+                nn.Conv2d(out_conv2_in, out_conv2_out, kernel_size=1, stride=1),
+                h_swish(inplace=True),
+                nn.Dropout(dropout_rate),
+                nn.Conv2d(out_conv2_out, self.num_classes, kernel_size=1, stride=1),
+            )
+
+            self.features.append(nn.Conv2d(out_conv2_in, out_conv2_out, kernel_size=1, stride=1))
+            self.features.append(h_swish(inplace=True))
+
+            self.features = nn.Sequential(*self.features)
+
+        elif model_mode == "SMALL":
+            layers = [
+                [16, 16, 3, 2, "RE", True, 16],
+                [16, 24, 3, 2, "RE", False, 72],
+                [24, 24, 3, 1, "RE", False, 88],
+                [24, 40, 5, 2, "RE", True, 96],
+                [40, 40, 5, 1, "RE", True, 240],
+                [40, 40, 5, 1, "RE", True, 240],
+                [40, 48, 5, 1, "HS", True, 120],
+                [48, 48, 5, 1, "HS", True, 144],
+                [48, 96, 5, 2, "HS", True, 288],
+                [96, 96, 5, 1, "HS", True, 576],
+                [96, 96, 5, 1, "HS", True, 576],
+            ]
+
+            self.features = []
+
+            init_conv_out = _make_divisible(16 * multiplier)
+            self.init_conv = nn.Sequential(
+                nn.Conv2d(in_channels=3, out_channels=init_conv_out, kernel_size=3, stride=2, padding=1),
+                nn.BatchNorm2d(init_conv_out),
+                h_swish(inplace=True),
+            )
+
+            self.features.append(nn.Conv2d(in_channels=3, out_channels=init_conv_out, kernel_size=3, stride=2, padding=1))
+            self.features.append(nn.BatchNorm2d(init_conv_out))
+            self.features.append(h_swish(inplace=True))
+
+            self.block = []
+            for in_channels, out_channels, kernal_size, stride, nonlinear, se, exp_size in layers:
+                in_channels = _make_divisible(in_channels * multiplier)
+                out_channels = _make_divisible(out_channels * multiplier)
+                exp_size = _make_divisible(exp_size * multiplier)
+                self.block.append(MobileBlock(in_channels, out_channels, kernal_size, stride, nonlinear, se, exp_size))
+                self.features.append(MobileBlock(in_channels, out_channels, kernal_size, stride, nonlinear, se, exp_size))
+            self.block = nn.Sequential(*self.block)
+
+            out_conv1_in = _make_divisible(96 * multiplier)
+            out_conv1_out = _make_divisible(576 * multiplier)
+            self.out_conv1 = nn.Sequential(
+                nn.Conv2d(out_conv1_in, out_conv1_out, kernel_size=1, stride=1),
+                SqueezeBlock(out_conv1_out),
+                nn.BatchNorm2d(out_conv1_out),
+                h_swish(inplace=True),
+            )
+            self.features.append(nn.Conv2d(out_conv1_in, out_conv1_out, kernel_size=1, stride=1))
+            self.features.append(SqueezeBlock(out_conv1_out))
+            self.features.append(nn.BatchNorm2d(out_conv1_out))
+            self.features.append(h_swish(inplace=True))
+
+            out_conv2_in = _make_divisible(576 * multiplier)
+            out_conv2_out = _make_divisible(1280 * multiplier)
+            self.out_conv2 = nn.Sequential(
+                nn.Conv2d(out_conv2_in, out_conv2_out, kernel_size=1, stride=1),
+                h_swish(inplace=True),
+                nn.Dropout(dropout_rate),
+                nn.Conv2d(out_conv2_out, self.num_classes, kernel_size=1, stride=1),
+            )
+            self.features.append(nn.Conv2d(out_conv2_in, out_conv2_out, kernel_size=1, stride=1))
+            self.features.append(h_swish(inplace=True))
+            # self.features.append(nn.Dropout(dropout_rate))
+
+            self.features = nn.Sequential(*self.features)
+
+        self.apply(_weights_init)
 
     def forward(self, x):
-        x = self.first_conv(x)
-        x = self.features(x)
-        x = self.last_conv(x)
-        x = self.pool(x)
-        x = x.view(x.size(0), -1)
-        x = self.dropout(x)
-        x = self.classifier(x)
-        return x
-
-# Tạo mô hình
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = MobileNetV3(num_classes=10, config="large").to(device)
+        out = self.init_conv(x)
+        out = self.block(out)
+        out = self.out_conv1(out)
+        batch, channels, height, width = out.size()
+        print(f'MobileNetV3 : out-{out.size()}')
+        out = F.avg_pool2d(out, kernel_size=[height, width])
+        out = self.out_conv2(out).view(batch, -1)
+        return out
