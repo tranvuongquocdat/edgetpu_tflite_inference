@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from ..utils import box_utils
 from collections import namedtuple
-GraphPath = namedtuple("GraphPath", ['s0', 'name', 's1'])  #
+GraphPath = namedtuple("GraphPath", ['s0', 'name'])  #
 
 
 class SSD(nn.Module):
@@ -26,14 +26,12 @@ class SSD(nn.Module):
         self.is_test = is_test
         self.config = config
 
-        # register layers in source_layer_indexes by adding them to a module list
         self.source_layer_add_ons = nn.ModuleList([t[1] for t in source_layer_indexes
                                                    if isinstance(t, tuple) and not isinstance(t, GraphPath)])
         if device:
             self.device = device
         else:
-            # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            self.device = torch.device("cpu")
+            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         if is_test:
             self.config = config
             self.priors = config.priors.to(self.device)
@@ -43,36 +41,40 @@ class SSD(nn.Module):
         locations = []
         start_layer_index = 0
         header_index = 0
-        for index, end_layer_index in enumerate(self.source_layer_indexes):
-            if isinstance(end_layer_index, GraphPath):
+        for index_0, end_layer_index in enumerate(self.source_layer_indexes):#总共要循环两次
+
+            if isinstance(end_layer_index, GraphPath):#第一次循环执行
                 path = end_layer_index
                 end_layer_index = end_layer_index.s0
                 added_layer = None
-            elif isinstance(end_layer_index, tuple):
-                added_layer = end_layer_index[1]
-                end_layer_index = end_layer_index[0]
-                path = None
-            else:
+            else:#第二次循环执行
                 added_layer = None
                 path = None
-            for idx, layer in enumerate(self.base_net[start_layer_index: end_layer_index]):
+
+
+            for index_1,layer in enumerate(self.base_net[start_layer_index: end_layer_index]):
                 x = layer(x)
             if added_layer:
                 y = added_layer(x)
             else:
                 y = x
-            if path:
+
+  
+            if path:#只在第一次循环有值 GraphPath(s0=11, name='conv', s1=-1)
                 sub = getattr(self.base_net[end_layer_index], path.name)
-                if path.s1<0:
-                    for id, layer in enumerate(sub):
-                        y = layer(y)
-                else:
-                    for id, layer in enumerate(sub[:path.s1]):
-                        x = layer(x)
-                    y = x
-                    for idx, layer in enumerate(sub[path.s1:]):
-                        x = layer(x)
-                    end_layer_index += 1
+                for index_2,layer in enumerate(sub):
+                    y = layer(y)
+                # sub: Sequential(
+                #   (0): Conv2d(48, 288, kernel_size=(1, 1), stride=(1, 1), bias=False)
+                #   (1): BatchNorm2d(288, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+                #   (2): h_swish()
+                # )
+
+
+         
+ 
+
+      
             start_layer_index = end_layer_index
             confidence, location = self.compute_header(header_index, y)
             header_index += 1
@@ -101,17 +103,14 @@ class SSD(nn.Module):
             return confidences, boxes
         else:
             return confidences, locations
+            
 
     def compute_header(self, i, x):
-        # print(f'compute header : {i} ')
-        # print(f'{"input":>15} :', x.shape)
+
         confidence = self.classification_headers[i](x)
-        # print(f'{"confidence":>15} :', confidence.shape)
         confidence = confidence.permute(0, 2, 3, 1).contiguous()
         confidence = confidence.view(confidence.size(0), -1, self.num_classes)
-
         location = self.regression_headers[i](x)
-        # print(f'{"location":>15} :', location.shape)
         location = location.permute(0, 2, 3, 1).contiguous()
         location = location.view(location.size(0), -1, 4)
         return confidence, location

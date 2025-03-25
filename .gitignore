@@ -1,1 +1,7 @@
-/train/data/**
+train/vision/datasets/gud_dataset_merge/**
+train/vision/datasets/gud_dataset_merge/train/**
+train/vision/datasets/gud_dataset_merge/val/**
+train/vision/datasets/gud_dataset_merge/test/**
+train/vision/datasets/gud_dataset_merge/labels/**
+train/vision/datasets/gud_dataset_merge/labels/**
+train/trained_models/**
