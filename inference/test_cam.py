@@ -1,4 +1,4 @@
-# apicam.py (Server)
+# test_cam.py (Server)
 import asyncio
 import websockets
 import cv2
@@ -7,7 +7,7 @@ import json
 import base64
 import time
 
-async def handle_client(websocket):  # Loại bỏ tham số path không cần thiết
+async def handle_client(websocket):  # Chỉ giữ một tham số websocket
     cap = cv2.VideoCapture(0)  # Mở camera (0 là camera mặc định)
     if not cap.isOpened():
         print("Không thể mở camera")
@@ -64,8 +64,8 @@ async def handle_client(websocket):  # Loại bỏ tham số path không cần t
         cap.release()
 
 async def main():
-    # Thêm create_server thay vì serve để tương thích phiên bản mới
-    server = await websockets.server.serve(
+    # Sử dụng websockets.serve thay vì websockets.server.serve
+    server = await websockets.serve(
         handle_client,
         "0.0.0.0",
         8000
