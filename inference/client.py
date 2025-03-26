@@ -6,7 +6,7 @@ import json
 import base64
 from websockets.exceptions import ConnectionClosed
 
-SERVER_IP = "192.168.137.246"  # Thay đổi IP này thành IP của Raspberry Pi
+SERVER_IP = "192.168.137.162"  # Thay đổi IP này thành IP của Raspberry Pi
 SERVER_PORT = "8000"
 
 async def connect_to_server():
